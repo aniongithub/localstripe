@@ -1,6 +1,10 @@
 localstripe
 ===========
 
+.. image:: actions/workflows/ci-tests.yaml/badge.svg
+   :target: actions/workflows/ci-tests.yaml
+   :alt: CI Status
+
 *A fake but stateful Stripe server that you can run locally, for testing
 purposes.*
 
