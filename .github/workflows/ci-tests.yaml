@@ -47,7 +47,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
-      - name: Run Docker container
+      - name: Run Docker container and tests
         run: |
           # Run the container in the background
           docker run -d --name localstripe-test -p 8420:8420 localstripe:test
@@ -67,9 +67,9 @@ jobs:
             docker logs localstripe-test
             exit 1
           fi
-      
-      - name: Run tests
-        run: ./test.sh
+          
+          # Run the tests against the running container
+          ./test.sh
       
       - name: Cleanup
         if: always()
