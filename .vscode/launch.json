@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "LocalStripe Server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "localstripe",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "justMyCode": false
+        },
+        {
+            "name": "LocalStripe Server (Custom Port)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "localstripe",
+            "args": ["--port", "8421"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "justMyCode": false
+        }
+    ]
+}

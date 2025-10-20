@@ -1,0 +1,78 @@
+---
+
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  lint:
+    name: Linters
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.13
+      - run: pip install flake8 flake8-import-order doc8 Pygments
+      - run: flake8 .
+      - run: doc8 README.rst
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: deploy
+          load: true
+          tags: localstripe:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Run Docker container
+        run: |
+          # Run the container in the background
+          docker run -d --name localstripe-test -p 8420:8420 localstripe:test
+          
+          # Wait for server to be up
+          timeout=30
+          while [ $((timeout--)) -ge 0 ]; do
+            if nc -z -w 1 localhost 8420; then
+              echo "Server is responding"
+              break
+            fi
+            sleep 1
+          done
+          
+          if [ $timeout -lt 0 ]; then
+            echo "Server failed to start"
+            docker logs localstripe-test
+            exit 1
+          fi
+      
+      - name: Run tests
+        run: ./test.sh
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop localstripe-test || true
+          docker rm localstripe-test || true

@@ -1,0 +1,134 @@
+---
+
+name: release
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: aniongithub/localstripe
+
+jobs:
+  test-docker-image:
+    name: Test Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image for testing
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: deploy
+          load: true
+          tags: localstripe:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Docker container
+        run: |
+          # Run the container in the background
+          docker run -d --name localstripe-test -p 8420:8420 localstripe:test
+          
+          # Wait for server to be up
+          timeout=30
+          while [ $((timeout--)) -ge 0 ]; do
+            if curl -f http://localhost:8420/v1/customers 2>/dev/null; then
+              echo "Server is responding"
+              break
+            fi
+            sleep 1
+          done
+          
+          if [ $timeout -lt 0 ]; then
+            echo "Server failed to start"
+            docker logs localstripe-test
+            exit 1
+          fi
+          
+          # Clean up
+          docker stop localstripe-test
+          docker rm localstripe-test
+
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test-docker-image
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: deploy
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: test-docker-image
+    if: github.event_name == 'release' && github.event.action == 'published'
+    permissions:
+      id-token: write  # For trusted publishing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
