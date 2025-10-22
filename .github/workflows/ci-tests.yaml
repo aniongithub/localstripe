@@ -57,9 +57,26 @@ jobs:
           # Run the container in the background
           docker run -d --name localstripe-test -p $HOST_PORT:8420 localstripe:test
           
+          # Check container status immediately
+          echo "=== Container status after start ==="
+          docker ps -a --filter name=localstripe-test
+          echo "=== Container logs immediately after start ==="
+          docker logs localstripe-test
+          echo "=== End immediate logs ==="
+          
           # Wait for server to be up
           timeout=30
           while [ $((timeout--)) -ge 0 ]; do
+            # Check if container is still running
+            if ! docker ps --filter name=localstripe-test --filter status=running | grep -q localstripe-test; then
+              echo "Container has stopped running!"
+              echo "=== Container status ==="
+              docker ps -a --filter name=localstripe-test
+              echo "=== Container logs ==="
+              docker logs localstripe-test
+              exit 1
+            fi
+            
             if nc -z -w 1 localhost $HOST_PORT; then
               echo "Server is responding"
               break
@@ -69,6 +86,9 @@ jobs:
           
           if [ $timeout -lt 0 ]; then
             echo "Server failed to start"
+            echo "=== Final container status ==="
+            docker ps -a --filter name=localstripe-test
+            echo "=== Final container logs ==="
             docker logs localstripe-test
             exit 1
           fi

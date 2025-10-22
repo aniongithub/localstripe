@@ -3,7 +3,7 @@
 
 set -eux
 
-HOST=http://localhost:8420
+HOST=${HOST:-http://localhost:8420}
 SK=sk_test_12345
 
 cus=$(curl -sSfg -u $SK: $HOST/v1/customers \
