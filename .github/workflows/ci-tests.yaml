@@ -54,7 +54,11 @@ jobs:
           echo "Using host port: $HOST_PORT"
           echo "HOST_PORT=$HOST_PORT" >> $GITHUB_ENV
           
-          # Run the container in the background
+          # Try running container interactively first to see immediate output
+          echo "=== Testing container interactively ==="
+          timeout 5 docker run --rm -p $HOST_PORT:8420 localstripe:test || echo "Interactive run completed/timed out"
+          
+          # Now run the container in the background
           docker run -d --name localstripe-test -p $HOST_PORT:8420 localstripe:test
           
           # Check container status immediately
