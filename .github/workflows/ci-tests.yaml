@@ -64,6 +64,16 @@ jobs:
           docker logs localstripe-test
           echo "=== End immediate logs ==="
           
+          # Check what processes are running inside the container
+          echo "=== Processes inside container ==="
+          docker exec localstripe-test ps aux || echo "Failed to exec ps"
+          echo "=== End processes ==="
+          
+          # Try to manually start the server to see if it works
+          echo "=== Manual server test ==="
+          docker exec localstripe-test python -u -c "import localstripe.server; print('Import successful')" || echo "Import failed"
+          echo "=== End manual test ==="
+          
           # Wait for server to be up
           timeout=30
           while [ $((timeout--)) -ge 0 ]; do
