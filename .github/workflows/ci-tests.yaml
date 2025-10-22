@@ -47,47 +47,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
-      - name: Run Docker container
+      - name: Start LocalStripe server
+        uses: addnab/docker-run-action@v3
+        with:
+          image: localstripe:test
+          options: -d --name localstripe-test -p 8420:8420
+      
+      - name: Wait for server to be ready
         run: |
-          # Find a free port
-          HOST_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
-          echo "Using host port: $HOST_PORT"
-          echo "HOST_PORT=$HOST_PORT" >> $GITHUB_ENV
-          
-          # Run the container in the background with explicit stdout/stderr
-          docker run -d --name localstripe-test -p $HOST_PORT:8420 localstripe:test
-          
-          # Check container status immediately
-          echo "=== Container status after start ==="
-          docker ps -a --filter name=localstripe-test
-          echo "=== Container logs immediately after start ==="
-          docker logs localstripe-test
-          echo "=== End immediate logs ==="
-          
-          # Check what processes are running inside the container
-          echo "=== Processes inside container ==="
-          docker exec localstripe-test ps aux || echo "Failed to exec ps"
-          echo "=== End processes ==="
-          
-          # Try to manually start the server to see if it works
-          echo "=== Manual server test ==="
-          docker exec localstripe-test python -u -c "import localstripe.server; print('Import successful')" || echo "Import failed"
-          echo "=== End manual test ==="
-          
           # Wait for server to be up
           timeout=30
           while [ $((timeout--)) -ge 0 ]; do
-            # Check if container is still running
-            if ! docker ps --filter name=localstripe-test --filter status=running | grep -q localstripe-test; then
-              echo "Container has stopped running!"
-              echo "=== Container status ==="
-              docker ps -a --filter name=localstripe-test
-              echo "=== Container logs ==="
-              docker logs localstripe-test
-              exit 1
-            fi
-            
-            if nc -z -w 1 localhost $HOST_PORT; then
+            if nc -z -w 1 localhost 8420; then
               echo "Server is responding"
               break
             fi
@@ -96,44 +67,17 @@ jobs:
           
           if [ $timeout -lt 0 ]; then
             echo "Server failed to start"
-            echo "=== Final container status ==="
-            docker ps -a --filter name=localstripe-test
-            echo "=== Final container logs ==="
             docker logs localstripe-test
             exit 1
           fi
       
-      - name: Test HTTP requests manually
-        run: |
-          echo "=== Server logs before manual tests ==="
-          docker logs localstripe-test
-          echo "=== End server logs ==="
-          
-          echo "=== Testing basic HTTP connectivity on port $HOST_PORT ==="
-          curl -v http://localhost:$HOST_PORT/ || echo "Basic HTTP test failed"
-          
-          echo "=== Server logs after basic HTTP test ==="
-          docker logs localstripe-test
-          echo "=== End server logs ==="
-          
-          echo "=== Testing authenticated endpoint ==="
-          curl -v -u sk_test_12345: http://localhost:$HOST_PORT/v1/customers || echo "Auth test failed"
-          
-          echo "=== Server logs after auth test ==="
-          docker logs localstripe-test
-          echo "=== End server logs ==="
+
       
       - name: Run tests
         run: |
-          echo "=== Running full test suite ==="
-          HOST=http://localhost:$HOST_PORT ./test.sh
+          chmod +x test.sh
+          ./test.sh
           
-          echo "=== Server logs after full tests ==="
-          docker logs localstripe-test
-          echo "=== End server logs ==="
-      
-      - name: Cleanup
+      - name: Stop LocalStripe server
         if: always()
-        run: |
-          docker stop localstripe-test || true
-          docker rm localstripe-test || true
+        run: docker stop localstripe-test
