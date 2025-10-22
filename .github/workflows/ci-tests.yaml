@@ -69,7 +69,16 @@ jobs:
           fi
       
       - name: Run tests
-        run: ./test.sh
+        run: |
+          echo "=== Server logs before running tests ==="
+          docker logs localstripe-test
+          echo "=== End server logs ==="
+          
+          ./test.sh
+          
+          echo "=== Server logs after running tests ==="
+          docker logs localstripe-test
+          echo "=== End server logs ==="
       
       - name: Cleanup
         if: always()
