@@ -1,0 +1,107 @@
+---
+
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  lint:
+    name: Linters
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.13
+      - run: pip install flake8 flake8-import-order doc8 Pygments
+      - run: flake8 .
+      - run: doc8 README.rst
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: deploy
+          load: true
+          tags: localstripe:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Run Docker container
+        run: |
+          # Find a free port
+          HOST_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+          echo "Using host port: $HOST_PORT"
+          echo "HOST_PORT=$HOST_PORT" >> $GITHUB_ENV
+          
+          # Run the container in the background with explicit stdout/stderr
+          docker run -d --name localstripe-test -p $HOST_PORT:8420 localstripe:test
+                              
+          # Try to manually start the server to see if it works
+          echo "=== Manual server test ==="
+          docker exec localstripe-test python -u -c "import localstripe.server; print('Import successful')" || echo "Import failed"
+          echo "=== End manual test ==="
+          
+          # Wait for server to be up
+          timeout=30
+          while [ $((timeout--)) -ge 0 ]; do
+            # Check if container is still running
+            if ! docker ps --filter name=localstripe-test --filter status=running | grep -q localstripe-test; then
+              echo "Container has stopped running!"
+              echo "=== Container status ==="
+              docker ps -a --filter name=localstripe-test
+              echo "=== Container logs ==="
+              docker logs localstripe-test
+              exit 1
+            fi
+            
+            if nc -z -w 1 localhost $HOST_PORT; then
+              echo "Server is responding"
+              break
+            fi
+            sleep 1
+          done
+          
+          if [ $timeout -lt 0 ]; then
+            echo "Server failed to start"
+            echo "=== Final container status ==="
+            docker ps -a --filter name=localstripe-test
+            echo "=== Final container logs ==="
+            docker logs localstripe-test
+            exit 1
+          fi
+           
+      - name: Run tests
+        run: |
+          echo "=== Running full test suite ==="
+          HOST=http://localhost:$HOST_PORT ./test.sh
+          
+          echo "=== Server logs after full tests ==="
+          docker logs localstripe-test
+          echo "=== End server logs ==="
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop localstripe-test || true
+          docker rm localstripe-test || true
