@@ -27,5 +27,5 @@ WORKDIR /app
 # Expose the default port
 EXPOSE 8420
 
-# Run localstripe
-CMD ["python", "-m", "localstripe"]
+# Run localstripe with unbuffered output
+CMD ["python", "-u", "-m", "localstripe"]
