@@ -1,5 +1,5 @@
 # Base stage with common dependencies
-FROM python:3-slim AS base
+FROM python:3.9.24-slim-bookworm AS base
 
 # Development container stage
 FROM base AS devcontainer
@@ -17,12 +17,10 @@ FROM base AS deploy
 WORKDIR /app
 
 # Copy requirements and source code
-COPY . .
+COPY . /app
 
 # Install the package
 RUN pip install .
-# Set working directory
-WORKDIR /app
 
 # Expose the default port
 EXPOSE 8420
