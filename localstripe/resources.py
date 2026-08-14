@@ -1103,6 +1103,8 @@ class Event(StripeObject):
         self.type = type
         self.data = {'object': data._export()}
         self.api_version = '2017-08-15'
+        self.request = {'id': None, 'idempotency_key': None}
+        self.pending_webhooks = 1
 
     @classmethod
     def _api_create(cls, **data):

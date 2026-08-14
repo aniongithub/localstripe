@@ -1241,6 +1241,18 @@ count=$(
   | grep -oP '^  "total_count": \K([0-9]+)')
 [ "$count" -eq 0 ]
 
+## test that emitted events include a top-level `request` object (needed by
+## Stripe.net 47's EventConverter, which throws a NullReferenceException when
+## `request` is absent):
+curl -sSfg -u $SK: $HOST/v1/customers \
+     -d email=event-request-envelope@example.com >/dev/null
+newest_event=$(curl -sSfg -u $SK: "$HOST/v1/events?limit=1")
+# the newest event carries a `request` key, and it is a JSON object ...
+request_object=$(echo "$newest_event" | grep -oE '"request": \{')
+[ -n "$request_object" ]
+# ... containing the `id` and `idempotency_key` fields:
+echo "$newest_event" | grep -qE '"idempotency_key": null'
+
 # Create a customer with card 4000000000000341 (that fails upon payment) and
 # make sure creating the subscription doesn't fail (although it creates it with
 # status 'incomplete'). This how Stripe behaves, see
