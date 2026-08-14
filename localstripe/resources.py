@@ -26,7 +26,7 @@ import time
 from dateutil.relativedelta import relativedelta
 
 from .errors import UserError
-from .webhooks import schedule_webhook
+from .webhooks import register_webhook, schedule_webhook, unregister_webhook
 
 
 # Save built-in keyword `type`, because some classes override it by using
@@ -2663,6 +2663,101 @@ class Product(StripeObject):
         if active is not None:
             li._list = [obj for obj in li._list if obj.active == active]
 
+        return li
+
+
+class WebhookEndpoint(StripeObject):
+    object = 'webhook_endpoint'
+    _id_prefix = 'we_'
+
+    def __init__(self, id=None, url=None, enabled_events=None, metadata=None,
+                 description=None, api_version=None, connect=None, **kwargs):
+        if kwargs:
+            raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
+
+        try:
+            assert _type(url) is str and url.startswith('http')
+            assert _type(enabled_events) is list and len(enabled_events)
+            assert all(_type(e) is str for e in enabled_events)
+            if metadata is not None:
+                assert _type(metadata) is dict
+            if description is not None:
+                assert _type(description) is str
+            if api_version is not None:
+                assert _type(api_version) is str
+        except AssertionError:
+            raise UserError(400, 'Bad request')
+
+        # All exceptions must be raised before this point.
+        super().__init__(id)
+
+        self.url = url
+        self.enabled_events = enabled_events
+        self.metadata = metadata or {}
+        self.description = description
+        self.api_version = api_version
+        self.status = 'enabled'
+        # Per-endpoint random signing secret, returned on create (and, for this
+        # CI mock, also on retrieve/list so a consumer holding only the id can
+        # fetch it to configure signature verification).
+        self.secret = 'whsec_' + random_id(32)
+
+        self._register()
+
+    def _register(self):
+        events = None if '*' in self.enabled_events else self.enabled_events
+        register_webhook(self.id, self.url, self.secret, events)
+
+    @classmethod
+    def _reregister_all(cls):
+        for key, obj in store.items():
+            if key.startswith(cls.object + ':'):
+                obj._register()
+
+    @classmethod
+    def _api_update(cls, id, **data):
+        obj = cls._api_retrieve(id)
+
+        disabled = try_convert_to_bool(data.pop('disabled', None))
+        enabled_events = data.get('enabled_events', None)
+        try:
+            if 'url' in data:
+                assert (_type(data['url']) is str and
+                        data['url'].startswith('http'))
+            if enabled_events is not None:
+                assert _type(enabled_events) is list and len(enabled_events)
+                assert all(_type(e) is str for e in enabled_events)
+            if 'metadata' in data and data['metadata'] is not None:
+                assert _type(data['metadata']) is dict
+            if disabled is not None:
+                assert _type(disabled) is bool
+            if 'status' in data:
+                assert data['status'] in ('enabled', 'disabled')
+        except AssertionError:
+            raise UserError(400, 'Bad request')
+
+        obj._update(**data)
+        if disabled is not None:
+            obj.status = 'disabled' if disabled else 'enabled'
+
+        obj._register()
+        return obj
+
+    @classmethod
+    def _api_delete(cls, id):
+        # Validate existence first (raises 404 if missing).
+        cls._api_retrieve(id)
+        unregister_webhook(id)
+        return super()._api_delete(id)
+
+    @classmethod
+    def _api_list_all(cls, url, limit=None, starting_after=None, **kwargs):
+        if kwargs:
+            raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
+
+        li = super(WebhookEndpoint, cls)._api_list_all(
+            url, limit=limit, starting_after=starting_after)
+        li._list.sort(key=lambda o: o.created, reverse=True)
         return li
 
 
