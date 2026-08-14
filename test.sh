@@ -1241,6 +1241,18 @@ count=$(
   | grep -oP '^  "total_count": \K([0-9]+)')
 [ "$count" -eq 0 ]
 
+## test that emitted events include a top-level `request` object (needed by
+## Stripe.net 47's EventConverter, which throws a NullReferenceException when
+## `request` is absent):
+curl -sSfg -u $SK: $HOST/v1/customers \
+     -d email=event-request-envelope@example.com >/dev/null
+newest_event=$(curl -sSfg -u $SK: "$HOST/v1/events?limit=1")
+# the newest event carries a `request` key, and it is a JSON object ...
+request_object=$(echo "$newest_event" | grep -oE '"request": \{')
+[ -n "$request_object" ]
+# ... containing the `id` and `idempotency_key` fields:
+echo "$newest_event" | grep -qE '"idempotency_key": null'
+
 # Create a customer with card 4000000000000341 (that fails upon payment) and
 # make sure creating the subscription doesn't fail (although it creates it with
 # status 'incomplete'). This how Stripe behaves, see
@@ -1402,3 +1414,65 @@ completed_event=$(
   curl -sSfg -u $SK: "$HOST/v1/events?type=checkout.session.completed" \
   | grep -oE "\"id\": \"$cs\"")
 [ -n "$completed_event" ]
+
+### test webhook_endpoints CRUD (used by consumers to self-register signed
+### webhook receivers via the standard Stripe API):
+
+# create an endpoint, assert id starts with we_ and a whsec_ secret is returned
+we_res=$(curl -sSfg -u $SK: $HOST/v1/webhook_endpoints \
+              -d url=https://example.com/webhook \
+              -d enabled_events[]=invoice.created \
+              -d enabled_events[]=customer.created \
+              -d metadata[name]=warp-endpoint \
+              -d description='Warp CI endpoint')
+we=$(echo "$we_res" | grep -oE 'we_\w+' | head -n 1)
+[ -n "$we" ]
+secret=$(echo "$we_res" | grep -oE 'whsec_\w+' | head -n 1)
+[ -n "$secret" ]
+# metadata must round-trip exactly
+echo "$we_res" | grep -oE '"name": "warp-endpoint"' | head -n 1 | grep -q name
+
+# retrieve by id, assert the secret is also available after creation
+retrieved_secret=$(curl -sSfg -u $SK: $HOST/v1/webhook_endpoints/$we \
+                   | grep -oE 'whsec_\w+' | head -n 1)
+[ "$retrieved_secret" = "$secret" ]
+
+# create a second endpoint so we can test list + limit
+we2=$(curl -sSfg -u $SK: $HOST/v1/webhook_endpoints \
+           -d url=https://example.com/webhook2 \
+           -d enabled_events[]='*' \
+      | grep -oE 'we_\w+' | head -n 1)
+[ -n "$we2" ]
+
+# list contains our endpoint
+listed=$(curl -sSfg -u $SK: $HOST/v1/webhook_endpoints \
+         | grep -oE "$we" | head -n 1)
+[ -n "$listed" ]
+
+# limit=1 returns a single item
+limited=$(curl -sSfg -u $SK: $HOST/v1/webhook_endpoints?limit=1 \
+          | grep -ocE 'we_\w+')
+[ "$limited" -eq 1 ]
+
+# update enabled_events
+updated=$(curl -sSfg -u $SK: $HOST/v1/webhook_endpoints/$we \
+               -d enabled_events[]=charge.succeeded \
+          | grep -oE '"charge.succeeded"')
+[ -n "$updated" ]
+
+# delete, assert deleted: true
+deleted=$(curl -sSfg -u $SK: -X DELETE $HOST/v1/webhook_endpoints/$we \
+          | grep -oE '"deleted": true')
+[ -n "$deleted" ]
+
+# deleted endpoint is gone
+code=$(curl -sg -o /dev/null -w '%{http_code}' -u $SK: \
+            $HOST/v1/webhook_endpoints/$we)
+[ "$code" -eq 404 ]
+
+# invalid url is rejected
+code=$(curl -sg -o /dev/null -w '%{http_code}' -u $SK: \
+            $HOST/v1/webhook_endpoints \
+            -d url=not-a-url \
+            -d enabled_events[]=invoice.created)
+[ "$code" -eq 400 ]
