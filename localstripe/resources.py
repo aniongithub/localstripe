@@ -2763,6 +2763,308 @@ class WebhookEndpoint(StripeObject):
         return li
 
 
+class Price(StripeObject):
+    object = 'price'
+    _id_prefix = 'price_'
+
+    def __init__(self, id=None, active=None, currency=None, unit_amount=None,
+                 product=None, product_data=None, recurring=None,
+                 nickname=None, lookup_key=None, metadata=None, **kwargs):
+        if kwargs:
+            raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
+
+        if active is None:
+            active = True
+        else:
+            active = try_convert_to_bool(active)
+        if unit_amount is not None:
+            unit_amount = try_convert_to_int(unit_amount)
+
+        try:
+            assert id is None or _type(id) is str and id
+            assert _type(active) is bool
+            assert _type(currency) is str and currency
+            if unit_amount is not None:
+                assert _type(unit_amount) is int and unit_amount >= 0
+            if nickname is not None:
+                assert _type(nickname) is str
+            if lookup_key is not None:
+                assert _type(lookup_key) is str
+            if metadata is not None:
+                assert _type(metadata) is dict
+            assert product is not None or product_data is not None
+            assert not (product is not None and product_data is not None)
+            if product is not None:
+                assert _type(product) is str and product
+            if product_data is not None:
+                assert _type(product_data) is dict
+                assert _type(product_data.get('name')) is str \
+                    and product_data['name']
+            if recurring is not None:
+                assert _type(recurring) is dict
+                assert recurring.get('interval') in ('day', 'week', 'month',
+                                                     'year')
+                interval_count = recurring.get('interval_count')
+                if interval_count is not None:
+                    interval_count = try_convert_to_int(interval_count)
+                    assert _type(interval_count) is int and interval_count > 0
+                    recurring['interval_count'] = interval_count
+                else:
+                    recurring['interval_count'] = 1
+        except AssertionError:
+            raise UserError(400, 'Bad request')
+
+        if product is not None:
+            Product._api_retrieve(product)  # to return 404 if not existant
+        else:
+            product = Product(
+                name=product_data['name'],
+                metadata=product_data.get('metadata'),
+                active=try_convert_to_bool(
+                    product_data.get('active', True))).id
+
+        # All exceptions must be raised before this point.
+        super().__init__(id)
+
+        self.active = active
+        self.currency = currency
+        self.unit_amount = unit_amount
+        self.product = product
+        self.recurring = recurring
+        self.type = 'recurring' if recurring else 'one_time'
+        self.nickname = nickname
+        self.lookup_key = lookup_key
+        self.metadata = metadata or {}
+
+        schedule_webhook(Event('price.created', self))
+
+    @classmethod
+    def _api_list_all(cls, url, active=None, product=None, type=None,
+                      lookup_keys=None, limit=None, starting_after=None,
+                      **kwargs):
+        if kwargs:
+            raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
+
+        active = try_convert_to_bool(active)
+        try:
+            if active is not None:
+                assert _type(active) is bool
+            if product is not None:
+                assert _type(product) is str
+            if type is not None:
+                assert type in ('one_time', 'recurring')
+            if lookup_keys is not None:
+                assert _type(lookup_keys) is list
+                assert all(_type(k) is str for k in lookup_keys)
+        except AssertionError:
+            raise UserError(400, 'Bad request')
+
+        li = super(Price, cls)._api_list_all(
+            url, limit=limit, starting_after=starting_after
+        )
+
+        if active is not None:
+            li._list = [obj for obj in li._list if obj.active == active]
+        if product is not None:
+            li._list = [obj for obj in li._list if obj.product == product]
+        if type is not None:
+            li._list = [obj for obj in li._list if obj.type == type]
+        if lookup_keys is not None:
+            li._list = [obj for obj in li._list
+                        if obj.lookup_key in lookup_keys]
+
+        return li
+
+
+class CheckoutSession(StripeObject):
+    object = 'checkout.session'
+    _id_prefix = 'cs_'
+
+    def __init__(self, mode=None, line_items=None, success_url=None,
+                 cancel_url=None, customer=None, client_reference_id=None,
+                 metadata=None, **kwargs):
+        if kwargs:
+            raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
+
+        if mode is None:
+            mode = 'payment'
+
+        try:
+            assert mode in ('payment', 'subscription', 'setup')
+            if success_url is not None:
+                assert _type(success_url) is str
+            if cancel_url is not None:
+                assert _type(cancel_url) is str
+            if customer is not None:
+                assert _type(customer) is str and customer.startswith('cus_')
+            if client_reference_id is not None:
+                assert _type(client_reference_id) is str
+            if metadata is not None:
+                assert _type(metadata) is dict
+            if line_items is not None:
+                assert _type(line_items) is list
+            if mode in ('payment', 'subscription'):
+                assert line_items
+        except AssertionError:
+            raise UserError(400, 'Bad request')
+
+        if customer is not None:
+            Customer._api_retrieve(customer)  # to return 404 if not existant
+
+        normalized_items = []
+        amount_total = 0
+        currency = None
+        for item in (line_items or []):
+            try:
+                assert _type(item) is dict
+                quantity = try_convert_to_int(item.get('quantity', 1))
+                assert _type(quantity) is int and quantity > 0
+                price_id = item.get('price')
+                price_data = item.get('price_data')
+                assert price_id is not None or price_data is not None
+            except AssertionError:
+                raise UserError(400, 'Bad request')
+
+            if price_id is not None:
+                # to return 404 if not existant:
+                price = Price._api_retrieve(price_id)
+            else:
+                if _type(price_data) is not dict:
+                    raise UserError(400, 'Bad request')
+                price = Price(
+                    currency=price_data.get('currency'),
+                    unit_amount=price_data.get('unit_amount'),
+                    product=price_data.get('product'),
+                    product_data=price_data.get('product_data'),
+                    recurring=price_data.get('recurring'))
+                price_id = price.id
+
+            if price.unit_amount is not None:
+                amount_total += price.unit_amount * quantity
+            if currency is None:
+                currency = price.currency
+            normalized_items.append({'price': price_id, 'quantity': quantity})
+
+        # All exceptions must be raised before this point.
+        super().__init__()
+
+        self.mode = mode
+        self.success_url = success_url
+        self.cancel_url = cancel_url
+        self.customer = customer
+        self.client_reference_id = client_reference_id
+        self.metadata = metadata or {}
+        self.status = 'open'
+        self.payment_status = 'unpaid'
+        self.amount_subtotal = amount_total
+        self.amount_total = amount_total
+        self.currency = currency
+        self.payment_intent = None
+        self.subscription = None
+        self.url = 'https://checkout.localstripe.example/c/pay/' + self.id
+        self._line_items = normalized_items
+
+        if mode == 'payment' and amount_total > 0:
+            pi = PaymentIntent(amount=amount_total,
+                               currency=currency or 'usd',
+                               customer=customer)
+            self.payment_intent = pi.id
+
+    @classmethod
+    def _api_list_all(cls, url=None, customer=None, limit=None,
+                      starting_after=None, **kwargs):
+        # Registered via `extra_apis`, so `url` is not injected by the router:
+        if url is None:
+            url = '/v1/checkout/sessions'
+        if kwargs:
+            raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
+
+        try:
+            if customer is not None:
+                assert _type(customer) is str and customer.startswith('cus_')
+        except AssertionError:
+            raise UserError(400, 'Bad request')
+
+        li = super(CheckoutSession, cls)._api_list_all(
+            url, limit=limit, starting_after=starting_after
+        )
+
+        if customer is not None:
+            li._list = [obj for obj in li._list if obj.customer == customer]
+
+        return li
+
+    @classmethod
+    def _api_complete(cls, id, **kwargs):
+        if kwargs:
+            raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
+
+        obj = cls._api_retrieve(id)
+        if obj.status == 'complete':
+            return obj
+
+        if obj.mode == 'payment':
+            if obj.payment_intent is not None:
+                pi = PaymentIntent._api_retrieve(obj.payment_intent)
+                if pi.status == 'requires_payment_method':
+                    # Attach a deterministic test card that always succeeds:
+                    pm = PaymentMethod._try_get_canonical_test_article(
+                        'pm_card_visa')
+                    pi.payment_method = pm.id
+                if pi.status == 'requires_confirmation':
+                    # Settles the charge and fires payment_intent.succeeded:
+                    pi._confirm(on_failure_now=pi._report_failure)
+        elif obj.mode == 'subscription':
+            sub = cls._maybe_create_subscription(obj)
+            if sub is not None:
+                obj.subscription = sub.id
+
+        obj.status = 'complete'
+        obj.payment_status = 'paid'
+
+        schedule_webhook(Event('checkout.session.completed', obj))
+
+        return obj
+
+    @classmethod
+    def _maybe_create_subscription(cls, session):
+        if session.customer is None:
+            return None
+
+        items = []
+        for li in session._line_items:
+            price = Price._api_retrieve(li['price'])
+            if not price.recurring:
+                continue
+            plan = Plan(
+                amount=price.unit_amount or 0,
+                currency=price.currency,
+                interval=price.recurring.get('interval'),
+                interval_count=price.recurring.get('interval_count', 1),
+                product=price.product,
+                nickname=price.nickname)
+            items.append({'plan': plan.id, 'quantity': li['quantity']})
+
+        if not items:
+            return None
+
+        try:
+            # Subscription currently supports a single item. Creating it fires
+            # `customer.subscription.created`. Requires the customer to have a
+            # default payment method, otherwise it is skipped (see PR notes).
+            return Subscription(customer=session.customer, items=items[:1])
+        except UserError:
+            return None
+
+
+extra_apis.extend((
+    ('POST', '/v1/checkout/sessions', CheckoutSession._api_create),
+    ('GET', '/v1/checkout/sessions/{id}', CheckoutSession._api_retrieve),
+    ('GET', '/v1/checkout/sessions', CheckoutSession._api_list_all),
+    ('POST', '/v1/checkout/sessions/{id}/complete',
+     CheckoutSession._api_complete)))
+
+
 class Refund(StripeObject):
     object = 'refund'
     _id_prefix = 're_'
