@@ -41,11 +41,14 @@ jobs:
           # Run the container in the background
           docker run -d --name localstripe-test -p 8420:8420 localstripe:test
           
-          # Wait for server to be up
+          # Wait for server to be up. The API requires auth, so an
+          # HTTP 401 on /v1/customers already proves the server is serving.
           timeout=30
           while [ $((timeout--)) -ge 0 ]; do
-            if curl -f http://localhost:8420/v1/customers 2>/dev/null; then
-              echo "Server is responding"
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+                        http://localhost:8420/v1/customers || true)
+            if [ -n "$code" ] && [ "$code" != "000" ]; then
+              echo "Server is responding (HTTP $code)"
               break
             fi
             sleep 1
