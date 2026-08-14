@@ -1157,6 +1157,12 @@ class Event(StripeObject):
 
         li._list = [obj for obj in li._list if all(f(obj) for f in filters)]
 
+        # Stripe returns events with the most recent first. `store` preserves
+        # insertion (chronological) order, so reversing yields newest-first.
+        # This also ensures a just-emitted event is reachable within the
+        # default page when many events of the same type already exist.
+        li._list.reverse()
+
         return li
 
 
