@@ -65,6 +65,11 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     needs: test-docker-image
+    # Docker Hub publishing is optional: skip cleanly when the credentials
+    # are not configured (e.g. on forks), and never fail the overall run if
+    # the login/push step errors out for lack of secrets.
+    if: ${{ vars.ENABLE_DOCKERHUB_PUBLISH == 'true' }}
+    continue-on-error: true
     permissions:
       contents: read
       packages: write
