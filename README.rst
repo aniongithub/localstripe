@@ -1,8 +1,8 @@
 localstripe
 ===========
 
-.. image:: actions/workflows/ci-tests.yaml/badge.svg
-   :target: actions/workflows/ci-tests.yaml
+.. image:: https://github.com/aniongithub/localstripe/actions/workflows/ci-tests.yaml/badge.svg
+   :target: https://github.com/aniongithub/localstripe/actions/workflows/ci-tests.yaml
    :alt: CI Status
 
 *A fake but stateful Stripe server that you can run locally, for testing
