@@ -2815,7 +2815,8 @@ class CheckoutSession(StripeObject):
 
     def __init__(self, mode=None, line_items=None, success_url=None,
                  cancel_url=None, customer=None, client_reference_id=None,
-                 metadata=None, **kwargs):
+                 metadata=None, customer_email=None, expires_at=None,
+                 payment_method_types=None, **kwargs):
         if kwargs:
             raise UserError(400, 'Unexpected ' + ', '.join(kwargs.keys()))
 
@@ -2834,6 +2835,14 @@ class CheckoutSession(StripeObject):
                 assert _type(client_reference_id) is str
             if metadata is not None:
                 assert _type(metadata) is dict
+            if customer_email is not None:
+                assert _type(customer_email) is str
+            if expires_at is not None:
+                expires_at = try_convert_to_int(expires_at)
+                assert _type(expires_at) is int
+            if payment_method_types is not None:
+                assert _type(payment_method_types) is list
+                assert all(_type(t) is str for t in payment_method_types)
             if line_items is not None:
                 assert _type(line_items) is list
             if mode in ('payment', 'subscription'):
@@ -2885,8 +2894,12 @@ class CheckoutSession(StripeObject):
         self.success_url = success_url
         self.cancel_url = cancel_url
         self.customer = customer
+        self.customer_email = customer_email
         self.client_reference_id = client_reference_id
         self.metadata = metadata or {}
+        self.payment_method_types = payment_method_types or ['card']
+        self.expires_at = (expires_at if expires_at is not None
+                           else self.created + 24 * 60 * 60)
         self.status = 'open'
         self.payment_status = 'unpaid'
         self.amount_subtotal = amount_total
@@ -2948,6 +2961,10 @@ class CheckoutSession(StripeObject):
                     # Settles the charge and fires payment_intent.succeeded:
                     pi._confirm(on_failure_now=pi._report_failure)
         elif obj.mode == 'subscription':
+            if obj.customer is None and obj.customer_email is not None:
+                # Real Stripe materializes the customer at completion when only
+                # an email was supplied at session creation:
+                obj.customer = Customer(email=obj.customer_email).id
             sub = cls._maybe_create_subscription(obj)
             if sub is not None:
                 obj.subscription = sub.id
