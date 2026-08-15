@@ -1470,6 +1470,39 @@ completed_event=$(
   | grep -oE "\"id\": \"$cs\"")
 [ -n "$completed_event" ]
 
+### test Checkout Session accepts real-Stripe fields that Warp's unmodified
+### subscription middleware sends (customer_email, expires_at,
+### payment_method_types[]) instead of 400ing on them:
+
+sub_checkout=$(
+  curl -sSfg -u $SK: $HOST/v1/checkout/sessions \
+       -d mode=subscription \
+       -d success_url=https://example.com/success \
+       -d cancel_url=https://example.com/cancel \
+       -d customer_email=warp-e2e@example.com \
+       -d expires_at=4102444800 \
+       -d client_reference_id=warp-ref-123 \
+       -d metadata[warp]=e2e \
+       -d payment_method_types[0]=card \
+       -d line_items[0][price]=$price \
+       -d line_items[0][quantity]=1)
+sub_cs=$(echo "$sub_checkout" | grep -oE 'cs_\w+' | head -n 1)
+[ -n "$sub_cs" ]
+
+# the real-Stripe fields are accepted and echoed back on the session
+[ -n "$(echo "$sub_checkout" | grep -oE '"customer_email": "warp-e2e@example.com",')" ]
+[ -n "$(echo "$sub_checkout" | grep -oP '"expires_at": \K4102444800')" ]
+[ -n "$(echo "$sub_checkout" | grep -oE '"card"')" ]
+[ -n "$(echo "$sub_checkout" | grep -oE '"client_reference_id": "warp-ref-123",')" ]
+[ -n "$(echo "$sub_checkout" | grep -oE '"warp": "e2e"')" ]
+
+# completing the subscription session still fires a signed completion event
+curl -sSfg -u $SK: -X POST $HOST/v1/checkout/sessions/$sub_cs/complete \
+  | grep -oE '"status": "complete",' > /dev/null
+[ -n "$(
+  curl -sSfg -u $SK: "$HOST/v1/events?type=checkout.session.completed" \
+  | grep -oE "\"id\": \"$sub_cs\"")" ]
+
 ### test webhook_endpoints CRUD (used by consumers to self-register signed
 ### webhook receivers via the standard Stripe API):
 
